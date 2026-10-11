@@ -229,16 +229,17 @@ const WECOM_TITLE_PREFIX = {
 	group: "企微·群"
 };
 /** Leading `企微·` / previously used `企业微信·` channel labels. */
-const CHANNEL_PREFIX = /^(?:企业微信|企微)·(?:私聊|群)\s*/u;
+const CHANNEL_PREFIX = /^(?:企业微信|企微)·(?:私聊|群)(?:·[^\s·]+)?\s*/u;
 /**
 * Sidebar title: channel kind plus first-prompt text, never an id.
 * @param kind - {@link WecomSessionRef.kind}.
 * @param raw - automatic or previously prefixed title.
 */
-function wecomDisplayTitle(kind, raw) {
-	const prefix = WECOM_TITLE_PREFIX[kind];
+function wecomDisplayTitle(kind, raw, who) {
+	const base = WECOM_TITLE_PREFIX[kind];
+	const label = who !== void 0 && who !== "" ? `${base}·${who}` : base;
 	const stripped = raw.replace(CHANNEL_PREFIX, "").trim();
-	return stripped === "" ? prefix : `${prefix} ${stripped}`;
+	return stripped === "" ? label : `${label} ${stripped}`;
 }
 /** One leading `@nickname` and its separator; JS `\s` covers WeCom's U+00A0 and U+2005. */
 const LEADING_MENTION = /^@[^\s@]+(?:\s+|$)/u;
@@ -332,6 +333,85 @@ function resolveWecomSession(frame) {
 	}
 	if (sender === "") throw new WecomSessionReject("无法识别发送者，已忽略");
 	return singleRef(sender);
+}
+//#endregion
+//#region src/wecom-members.ts
+/**
+* 企微成员登记表 —— 把 `openid / 会话 id` 换成能称呼的名字。
+*
+* 真源：工作区 `参考/企微成员登记.md`（企微私聊第一次对话时 Jarvis 问出姓名后自己追加）。
+* 本模块**只读**它、不写；读不到就返回空表（标题回退到补丁3 的行为，不抛错）。
+*
+* 为什么按「会话 id」也能查：DSH 给每次 shell 调用注入 `DSH_SESSION_ID`，
+* 企微私聊里就是插件建的那条 `wecom-…` 会话 —— Jarvis 登记时用的就是它。
+*/
+/** 登记表在工作区里的相对路径（真源，进 Git）。 */
+const WECOM_MEMBERS_RELATIVE_PATH = "参考/企微成员登记.md";
+const EMPTY = {
+	bySession: /* @__PURE__ */ new Map(),
+	byOpenid: /* @__PURE__ */ new Map()
+};
+/** 单元格：去掉 Markdown 反引号与首尾空白。 */
+function cell(value) {
+	return value.replaceAll("`", "").trim();
+}
+/** 分隔行（`|---|---|`）的单元格。 */
+const SEPARATOR = /^-+$/;
+/**
+* 解析登记表正文。
+*
+* **不假设列序**：只看「哪一格长得像 id、哪一格是称呼」，所以人工加行、调列都不怕。
+* 表头行与分隔行会自动跳过（它们找不到 id，也找不到称呼）。
+*/
+function parseWecomMembers(markdown) {
+	const bySession = /* @__PURE__ */ new Map();
+	const byOpenid = /* @__PURE__ */ new Map();
+	for (const line of markdown.split("\n")) {
+		if (!line.trimStart().startsWith("|")) continue;
+		const cells = line.split("|").slice(1, -1).map(cell);
+		if (cells.length < 2) continue;
+		const sessionId = cells.find((value) => value.startsWith("wecom-"));
+		const openid = cells.find((value) => value.startsWith("wo"));
+		const name = cells.find((value) => value !== "" && value !== "称呼" && !value.startsWith("wecom-") && !value.startsWith("wo") && !SEPARATOR.test(value));
+		if (name === void 0) continue;
+		if (sessionId !== void 0) bySession.set(sessionId, name);
+		if (openid !== void 0) byOpenid.set(openid, name);
+	}
+	return {
+		bySession,
+		byOpenid
+	};
+}
+let cache;
+/**
+* 按 mtime 缓存读取登记表。
+*
+* 文件不存在、读失败、表里没登记 —— 一律返回空表，**绝不影响标题生成**
+* （标题会回退显示开放 id，与补丁3 一致）。
+*
+* @param workspace - DSH 工作区根目录（插件配置 `workspace`）。
+*/
+function loadWecomMembers(workspace) {
+	const path = join(workspace, WECOM_MEMBERS_RELATIVE_PATH);
+	let mtimeMs;
+	try {
+		mtimeMs = statSync(path).mtimeMs;
+	} catch {
+		return EMPTY;
+	}
+	if (cache !== void 0 && cache.path === path && cache.mtimeMs === mtimeMs) return cache.index;
+	let index;
+	try {
+		index = parseWecomMembers(readFileSync(path, "utf8"));
+	} catch {
+		index = EMPTY;
+	}
+	cache = {
+		path,
+		mtimeMs,
+		index
+	};
+	return index;
 }
 //#endregion
 //#region node_modules/fflate/esm/index.mjs
@@ -8732,6 +8812,21 @@ function apply(ctx, config) {
 			}
 		}
 		/**
+		* 私聊标题里写谁在问：先按**会话 id**、再按 **openid** 查 `参考/企微成员登记.md`；
+		* 都没登记过就回退显示开放 id（= 补丁3 的行为，所以对未登记的人零改变）。
+		*
+		* 群聊一律不带 —— 群是共享会话，写「最后发言者」会误导。
+		*/
+		function wecomTitleWho(st) {
+			if (st.kind !== "single") return void 0;
+			const index = loadWecomMembers(cfg().workspace);
+			if (st.sessionId !== void 0) {
+				const bySession = index.bySession.get(st.sessionId);
+				if (bySession !== void 0) return bySession;
+			}
+			if (st.sender !== void 0 && st.sender !== "") return index.byOpenid.get(st.sender) ?? st.sender;
+		}
+		/**
 		* Add the channel prefix to a title the Host generated. `session/event`
 		* runs inside the append publication window, which refuses a reentrant
 		* append, so the prefixed title goes out in a microtask and re-reads the
@@ -8746,7 +8841,7 @@ function apply(ctx, config) {
 				if (data === void 0) return;
 				if (data.source?.kind === "user") return;
 				const raw = typeof data.title === "string" ? data.title : "";
-				const next = wecomDisplayTitle(kind, raw);
+				const next = wecomDisplayTitle(kind, raw, wecomTitleWho(st));
 				if (next === raw) return;
 				const messageSeqs = Array.isArray(data.messageSeqs) ? data.messageSeqs.filter((seq) => typeof seq === "number") : [];
 				if (messageSeqs.length === 0) return;
@@ -8960,6 +9055,7 @@ function apply(ctx, config) {
 			const flashMs = Number.isFinite(thinking?.intervalMs) && thinking.intervalMs > 0 ? thinking.intervalMs : DEFAULT_THINKING.intervalMs;
 			for (const st of chats.values()) {
 				if (st.sessionId !== session.id) continue;
+				st.session = session;
 				if (event.type === "session/title") {
 					prefixWecomTitle(session, st);
 					continue;
@@ -8997,6 +9093,8 @@ function apply(ctx, config) {
 				chats.set(ref.key, st);
 			}
 			st.office = senderHasOfficeAccess(cfg().wecomCli.allowFrom, ref.sender);
+			st.sender = ref.sender;
+			st.chatid = ref.chatid;
 			st = await ensureAgent(ref);
 			const startedAt = Date.now();
 			const streamId = generateReqId("stream");
@@ -9037,6 +9135,7 @@ function apply(ctx, config) {
 				}));
 				await st.agent.whenIdle();
 				await sessions.flush(st.agent.session);
+				if (st.session !== void 0) prefixWecomTitle(st.session, st);
 				const outcome = summarize(st.agent.session.snapshotEvents(), firstSeq);
 				if (stopThinking) stopThinking();
 				const ms = Date.now() - startedAt;

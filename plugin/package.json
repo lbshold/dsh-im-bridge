@@ -32,7 +32,7 @@
     "build": "tsdown --config tsdown.host.ts && tsdown --config tsdown.client.ts",
     "prepare": "tsdown --config tsdown.host.ts && tsdown --config tsdown.client.ts",
     "typecheck": "tsc -p tsconfig.typecheck.json",
-    "test": "npm run typecheck && node --experimental-strip-types --test tests/reply-images.test.ts tests/session-key.test.ts tests/wecom-cli.test.ts"
+    "test": "npm run typecheck && node --experimental-strip-types --test tests/reply-images.test.ts tests/session-key.test.ts tests/wecom-cli.test.ts tests/wecom-members.test.ts"
   },
   "dsh": {
     "bundle": {

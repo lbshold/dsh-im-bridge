@@ -34,6 +34,7 @@ import {
   WecomSessionReject,
   type WecomSessionRef,
 } from './session-key.ts'
+import { loadWecomMembers } from './wecom-members.ts'
 import {
   ALLOW_FROM_REQUIRED_MESSAGE,
   IM_BRIDGE_RPC_CHANNEL,
@@ -224,6 +225,8 @@ interface ChatState {
   sender?: string
   /** 当前窗口群 id（群聊）。 */
   chatid?: string
+  /** 当前窗口的会话对象（记下来，好在每轮回复后补一次标题）。 */
+  session?: TitledSession
   /** True when the current inbound sender is on `wecomCli.allowFrom`. */
   office: boolean
   /** Prompt sections already registered on this Agent. */
@@ -697,6 +700,25 @@ export function apply(ctx: Context, config: Config): void {
     }
 
     /**
+     * 私聊标题里写谁在问：先按**会话 id**、再按 **openid** 查 `参考/企微成员登记.md`；
+     * 都没登记过就回退显示开放 id（= 补丁3 的行为，所以对未登记的人零改变）。
+     *
+     * 群聊一律不带 —— 群是共享会话，写「最后发言者」会误导。
+     */
+    function wecomTitleWho(st: ChatState): string | undefined {
+      if (st.kind !== 'single') return undefined
+      const index = loadWecomMembers(cfg().workspace)
+      if (st.sessionId !== undefined) {
+        const bySession = index.bySession.get(st.sessionId)
+        if (bySession !== undefined) return bySession
+      }
+      if (st.sender !== undefined && st.sender !== '') {
+        return index.byOpenid.get(st.sender) ?? st.sender
+      }
+      return undefined
+    }
+
+    /**
      * Add the channel prefix to a title the Host generated. `session/event`
      * runs inside the append publication window, which refuses a reentrant
      * append, so the prefixed title goes out in a microtask and re-reads the
@@ -712,7 +734,7 @@ export function apply(ctx: Context, config: Config): void {
         // An explicit GUI rename is pinned on purpose; only automatic titles get labelled.
         if (data.source?.kind === 'user') return
         const raw = typeof data.title === 'string' ? data.title : ''
-        const next = wecomDisplayTitle(kind, raw, kind === 'single' ? st.sender : undefined)
+        const next = wecomDisplayTitle(kind, raw, wecomTitleWho(st))
         if (next === raw) return
         const messageSeqs = Array.isArray(data.messageSeqs)
           ? data.messageSeqs.filter((seq) => typeof seq === 'number')
@@ -967,6 +989,9 @@ export function apply(ctx: Context, config: Config): void {
         : DEFAULT_THINKING.intervalMs
       for (const st of chats.values()) {
         if (st.sessionId !== session.id) continue
+        // 记住会话对象：`handle()` 里每轮回复结束后要用它补一次标题，
+        // 而那里只有结构化的 `LiveAgent['session']`，拿不到 `append`。
+        st.session = session
         if (event.type === 'session/title') {
           prefixWecomTitle(session, st)
           continue
@@ -1071,6 +1096,9 @@ export function apply(ctx: Context, config: Config): void {
         }))
         await st.agent.whenIdle()
         await sessions.flush(st.agent.session)
+        // 对方可能在刚这一轮里报了姓名（Jarvis 会写进 `参考/企微成员登记.md`）——
+        // 补一次标题，不必等框架下次自动改标题，侧边栏当场就换成中文名。
+        if (st.session !== undefined) prefixWecomTitle(st.session, st)
         const outcome = summarize(st.agent.session.snapshotEvents(), firstSeq)
         if (stopThinking) stopThinking()
         const ms = Date.now() - startedAt
