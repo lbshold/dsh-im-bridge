@@ -22,9 +22,7 @@ This repository ships two run modes:
 
 | Mode | Description | Status |
 |---|---|---|
-| **`plugin/`** | DSH plugin (recommended): mounts into a dsh profile, creates Agents **in-process**, one durable session per WeCom chat window, visible in the Web GUI, with a Settings config card | Recommended |
-| **`bridge.js`** | Legacy standalone script: spawns `dsh --profile headless` per message (stateless) | Kept as fallback |
-
+| **`plugin/`** | DSH plugin (recommended): mounts into a dsh profile, creates Agents **in-process**, one durable session per WeCom chat window, visible in the Web GUI, with a Settings config card |
 ## Features
 
 - **Direct WebSocket**: no public URL, no message crypto, no IP allowlist

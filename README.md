@@ -21,9 +21,8 @@
 本仓库提供两种运行形态：
 
 | 形态 | 说明 | 状态 |
-|---|---|---|
-| **`plugin/`** | DSH 插件（推荐）：挂进 dsh profile，**进程内**创建 Agent，按企微窗口拆分持久会话，会话在 Web GUI 实时可见，含 Settings 配置卡片 | ✅ 推荐 |
-| **`bridge.js`** | 旧版独立脚本：每条消息 spawn `dsh --profile headless` 子进程（无状态） | 保留作回退 |
+|---|---|--|
+| **`plugin/`** | DSH 插件：挂进 dsh profile，**进程内**创建 Agent，按企微窗口拆分持久会话，会话在 Web GUI 实时可见，含 Settings 配置卡片 |
 
 ## ✨ 特性
 
