@@ -17,9 +17,6 @@ Connect WeCom (WeChat Work) AI Bot over a long-lived WebSocket, hand messages to
 ---
 
 ## Project overview
-
-This repository ships two run modes:
-
 | Mode | Description | Status |
 |---|---|---|
 | **`plugin/`** | DSH plugin (recommended): mounts into a dsh profile, creates Agents **in-process**, one durable session per WeCom chat window, visible in the Web GUI, with a Settings config card |
